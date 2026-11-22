@@ -6,9 +6,11 @@
     <title>EduGuard TryOut TKA — SMP ASSA'ADAH SURABAYA</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
+    
+<!-- SUPABASE CLIENT -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
-    <!-- Supabase JS SDK -->
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -877,6 +879,13 @@
         const LOCKED_CLASS_LEVEL = "Kelas 9";
         const DEFAULT_CARD_TITLE = "KARTU LOGIN PESERTA TRYOUT TKA";
 
+        const STORAGE_KEYS = {
+            STAFF: 'eduguard_tka_staff_v2',
+            STUDENTS: 'eduguard_tka_students_v2',
+            EXAMS: 'eduguard_tka_exams_v2',
+            QUESTIONS: 'eduguard_tka_questions_v2',
+            CARD_TITLE: 'eduguard_tka_card_title_v2'
+        };
 
         const memoryStorageFallback = {};
         const safeStorage = {
@@ -3955,105 +3964,66 @@
             window.print();
         }
 
-      // INISIALISASI SAAT HALAMAN DIMUAT
-        window.addEventListener('DOMContentLoaded', async () => {
-            loadAllData(true);
-            fillRandomStudentPasswordInput();
-            fillRandomStaffPasswordInput();
-            fillRandomStaffTokenInput();
-            refreshIcons();
-            await initSupabaseSync();
-        });
+      
+window.addEventListener('DOMContentLoaded', async () => {
+    loadAllData(true);
+
+    fillRandomStudentPasswordInput();
+    fillRandomStaffPasswordInput();
+    fillRandomStaffTokenInput();
+
+    refreshIcons();
+
+    // Test koneksi Supabase
+    await testSupabaseConnection();
+});
+
     </script>
-    <script>
-// =====================================================================
-        // KONFIGURASI SUPABASE & REALTIME V2
-        // =====================================================================
-        const SUPABASE_URL = 'https://dtlixsmqxwcnumpiffzz.supabase.co';
-        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR0bGl4c21xeHdjbnVtcGlmZnp6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTUzNTg5NzQsImV4cCI6MjExMDkzNDk3NH0.ql6-41e2FeU6uyfO8DdZse7LFnax5nDSlsugLh8zrHM';
-        const supabaseClient = (window.supabase && SUPABASE_URL.startsWith('http'))
-            ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
-            : null;
+<script>
 
-        const STORAGE_KEYS = {
-            STAFF: 'eduguard_tka_staff_v2',
-            STUDENTS: 'eduguard_tka_students_v2',
-            EXAMS: 'eduguard_tka_exams_v2',
-            QUESTIONS: 'eduguard_tka_questions_v2',
-            CARD_TITLE: 'eduguard_tka_card_title_v2'
-        };
+// =========================================================
+// SUPABASE CONFIGURATION
+// =========================================================
 
-        const memoryStorageFallback = {};
-        const safeStorage = {
-            getItem(key) {
-                try {
-                    return window.localStorage.getItem(key);
-                } catch (e) {
-                    return Object.prototype.hasOwnProperty.call(memoryStorageFallback, key) ? memoryStorageFallback[key] : null;
-                }
-            },
-            setItem(key, val) {
-                try {
-                    window.localStorage.setItem(key, val);
-                } catch (e) {
-                    memoryStorageFallback[key] = String(val);
-                }
-                pushSingleKeyToSupabase(key, val);
-            }
-        };
+const SUPABASE_URL = "https://kqpvytjmenuerymhojvz.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtxcHZ5dGptZW51ZXJ5bWhvanZ6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTUzNjI1MzgsImV4cCI6MjExMDkzODUzOH0.JiLuT8CfCYJEej8OLvOV_EgeR7g9mwaSuiBYJ5h313w";
 
-        async function pushSingleKeyToSupabase(key, val) {
-            if (!supabaseClient) return;
-            try {
-                let parsedVal = val;
-                try { parsedVal = JSON.parse(val); } catch (e) {}
-                await supabaseClient.from('eduguard_tka_store_v2').upsert({
-                    key: key,
-                    value: parsedVal,
-                    updated_at: new Date().toISOString()
-                }, { onConflict: 'key' });
-            } catch (err) {
-                console.error('Supabase push error:', err);
-            }
-        }
+const supabaseClient = window.supabase.createClient(
+    SUPABASE_URL,
+    SUPABASE_PUBLISHABLE_KEY
+);
 
-        async function initSupabaseSync() {
-            if (!supabaseClient) return;
-            try {
-                const { data, error } = await supabaseClient
-                    .from('eduguard_tka_store_v2')
-                    .select('key, value');
+// Status koneksi Supabase
+let supabaseConnected = false;
 
-                if (!error && Array.isArray(data) && data.length > 0) {
-                    data.forEach(row => {
-                        const strVal = typeof row.value === 'string' ? row.value : JSON.stringify(row.value);
-                        memoryStorageFallback[row.key] = strVal;
-                        try { window.localStorage.setItem(row.key, strVal); } catch (e) {}
-                    });
-                    loadAllData(false);
-                    refreshCurrentActiveUI();
-                } else if (!error && data.length === 0) {
-                    saveAllData();
-                }
+// =========================================================
+// TEST KONEKSI SUPABASE
+// =========================================================
 
-                supabaseClient
-                    .channel('eduguard-tka-channel-v2')
-                    .on('postgres_changes', { event: '*', schema: 'public', table: 'eduguard_tka_store_v2' }, (payload) => {
-                        if (payload.new && payload.new.key) {
-                            const strVal = typeof payload.new.value === 'string'
-                                ? payload.new.value
-                                : JSON.stringify(payload.new.value);
-                            memoryStorageFallback[payload.new.key] = strVal;
-                            try { window.localStorage.setItem(payload.new.key, strVal); } catch (e) {}
-                            loadAllData(false);
-                            refreshCurrentActiveUI();
-                        }
-                    })
-                    .subscribe();
-            } catch (err) {
-                console.error('Supabase init sync error:', err);
-            }
-        }
-  </script>
+async function testSupabaseConnection() {
+    try {
+        const { data, error } = await supabaseClient
+            .from('exams')
+            .select('id')
+            .limit(1);
+
+        if (error) throw error;
+
+        supabaseConnected = true;
+
+        console.log("Supabase berhasil terhubung!");
+        console.log("Data ujian:", data);
+
+        return true;
+
+    } catch (error) {
+        supabaseConnected = false;
+
+        console.error("Supabase connection error:", error);
+
+        return false;
+    }
+}
+</script>
 </body>
 </html>
