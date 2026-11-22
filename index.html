@@ -3962,14 +3962,14 @@
             window.print();
         }
 
-        // INISIALISASI SAAT HALAMAN DIMUAT
+      // INISIALISASI SAAT HALAMAN DIMUAT
         window.addEventListener('DOMContentLoaded', async () => {
             loadAllData(true);
             fillRandomStudentPasswordInput();
             fillRandomStaffPasswordInput();
             fillRandomStaffTokenInput();
             refreshIcons();
-            await initSupabaseSync(); // Muat data dan aktifkan realtime Supabase
+            await initSupabaseSync();
         });
     </script>
     <script>
@@ -4005,7 +4005,6 @@
                 } catch (e) {
                     memoryStorageFallback[key] = String(val);
                 }
-                // Sinkronisasi otomatis ke Supabase setiap ada perubahan data
                 pushSingleKeyToSupabase(key, val);
             }
         };
@@ -4041,11 +4040,9 @@
                     loadAllData(false);
                     refreshCurrentActiveUI();
                 } else if (!error && data.length === 0) {
-                    // Unggah data awal ke Supabase jika database masih kosong
                     saveAllData();
                 }
 
-                // Dengarkan perubahan realtime dari perangkat lain (Proktor, Guru, atau Siswa)
                 supabaseClient
                     .channel('eduguard-tka-channel-v2')
                     .on('postgres_changes', { event: '*', schema: 'public', table: 'eduguard_tka_store_v2' }, (payload) => {
