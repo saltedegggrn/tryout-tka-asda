@@ -4179,6 +4179,46 @@ async function testSupabaseConnection() {
         return false;
     }
 }
+
+
+async function createEduGuardAccount(account) {
+    try {
+        const { data, error } = await supabaseClient.functions.invoke(
+            'create-account',
+            {
+                body: {
+                    email: account.email,
+                    password: account.password,
+                    full_name: account.full_name,
+                    role: account.role,
+                    class_name: account.class_name || ''
+                }
+            }
+        );
+
+        if (error) throw error;
+        if (!data?.success) {
+            throw new Error(data?.error || 'Pembuatan akun gagal.');
+        }
+
+        showToast('Akun berhasil dibuat!', 'success');
+
+        console.log('Akun berhasil dibuat:', data.user);
+
+        return data.user;
+
+    } catch (error) {
+        console.error('Create account error:', error);
+
+        showToast(
+            error.message || 'Gagal membuat akun.',
+            'error'
+        );
+
+        return null;
+    }
+}
+
 </script>
 </body>
 </html>
