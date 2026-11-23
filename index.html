@@ -6,10 +6,7 @@
     <title>EduGuard TryOut TKA — SMP ASSA'ADAH SURABAYA</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
-    
-<!-- SUPABASE CLIENT -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1209,281 +1206,126 @@
             refreshIcons();
         }
 
-       
-async function handleStudentLogin(e) {
+        function handleStudentLogin(e) {
+            e.preventDefault();
+            loadAllData(false);
+            const nameInput = document.getElementById('student-login-name').value.trim();
+            const passInput = document.getElementById('student-login-password').value.trim();
+            const tokenInput = document.getElementById('student-login-token').value.trim().toUpperCase();
+
+            const student = studentsList.find(s => s.name.trim().toLowerCase() === nameInput.toLowerCase());
+            if (!student) {
+                showToast('Nama peserta tidak terdaftar di database Kelas 9!', 'error');
+                return;
+            }
+            if (String(student.password || '').trim() !== passInput) {
+                showToast('Password peserta salah!', 'error');
+                return;
+            }
+            const supervisor = staffList.find(st => String(st.roomToken || '').trim().toUpperCase() === tokenInput);
+            if (!supervisor) {
+                showToast('Token ruangan tidak valid! Periksa kembali token dari pengawas.', 'error');
+                return;
+            }
+
+            currentRole = 'STUDENT';
+            activeStudentId = student.id;
+            student.supervisorId = supervisor.id;
+            student.supervisorName = supervisor.name;
+            student.roomTokenUsed = supervisor.roomToken;
+            if (!student.status || student.status === 'OFFLINE') student.status = 'STANDBY';
+            broadcastSync('STUDENT_LOGGED_IN', { studentId: student.id });
+
+            document.getElementById('login-view').classList.add('hidden');
+            document.getElementById('staff-dashboard-view').classList.add('hidden');
+            document.getElementById('student-portal-view').classList.remove('hidden');
+
+            document.getElementById('student-header-name').textContent = student.name;
+            document.getElementById('student-header-class').textContent = student.className || LOCKED_CLASS_LEVEL;
+            document.getElementById('student-header-supervisor').textContent = `${supervisor.name} (${supervisor.roomToken})`;
+            updateStudentViolationHUD(student.violations || 0);
+
+            if (isStudentBlocked(student)) {
+                showBlockedOverlay(student);
+            } else {
+                hideBlockedOverlay();
+                returnStudentToLobby();
+            }
+            refreshIcons();
+        }
+
+        async function handleProctorLogin(e) {
     e.preventDefault();
+    await loadAllData(false);
+            const usernameInput = document.getElementById('staff-login-username').value.trim().toLowerCase();
+            const passwordInput = document.getElementById('staff-login-password').value.trim();
 
-    const emailInput = document
-        .getElementById('student-login-name')
-        .value.trim().toLowerCase();
+            const staff = staffList.find(st =>
+                String(st.username || '').trim().toLowerCase() === usernameInput &&
+                String(st.password || '').trim() === passwordInput
+            );
 
-    const passInput = document
-        .getElementById('student-login-password')
-        .value;
+            if (!staff) {
+                showToast('Username atau password Proktor/Guru tidak sesuai!', 'error');
+                return;
+            }
 
-    const tokenInput = document
-        .getElementById('student-login-token')
-        .value.trim().toUpperCase();
+            currentRole = staff.role === 'PROCTOR' ? 'PROCTOR' : 'GURU';
+            activeStaffId = staff.id;
 
-    if (!emailInput || !passInput || !tokenInput) {
-        showToast('Lengkapi email, password, dan token ruangan!', 'error');
-        return;
-    }
+            document.getElementById('login-view').classList.add('hidden');
+            document.getElementById('student-portal-view').classList.add('hidden');
+            document.getElementById('staff-dashboard-view').classList.remove('hidden');
 
-    try {
-        const { data: authData, error: authError } =
-            await supabaseClient.auth.signInWithPassword({
-                email: emailInput,
-                password: passInput
-            });
+            document.getElementById('staff-header-name').textContent = staff.name;
+            document.getElementById('staff-room-token-display').textContent = staff.roomToken || '-';
 
-        if (authError) throw authError;
+            const roleBadge = document.getElementById('staff-header-role-badge');
+            const tabStudentsBtn = document.getElementById('staff-tab-btn-students');
+            const tabStaffBtn = document.getElementById('staff-tab-btn-staff');
+            const examsTabLabel = document.getElementById('staff-tab-exams-label');
 
-        const user = authData.user;
-
-        // Ambil profil siswa dari Supabase
-        const { data: profile, error: profileError } =
-            await supabaseClient
-                .from('profiles')
-                .select('*')
-                .eq('id', user.id)
-                .single();
-
-        if (profileError) throw profileError;
-
-        if (profile.role !== 'STUDENT') {
-            await supabaseClient.auth.signOut();
-            throw new Error('Akun ini bukan akun peserta.');
+            if (currentRole === 'PROCTOR') {
+                roleBadge.textContent = 'PROKTOR';
+                roleBadge.className = 'px-2.5 py-0.5 rounded-lg bg-amber-500/20 border border-amber-400/40 text-amber-300 text-[10px] font-extrabold uppercase';
+                tabStudentsBtn.style.display = '';
+                tabStaffBtn.style.display = '';
+                examsTabLabel.textContent = 'Kontrol Paket Ujian';
+                document.getElementById('proctor-exams-control-wrapper').classList.remove('hidden');
+                document.getElementById('guru-workspace-wrapper').classList.add('hidden');
+                switchProctorTab('MONITORING');
+            } else {
+                roleBadge.textContent = 'GURU PENGAWAS';
+                roleBadge.className = 'px-2.5 py-0.5 rounded-lg bg-indigo-500/20 border border-indigo-400/40 text-indigo-200 text-[10px] font-extrabold uppercase';
+                // Isolasi ketat: Guru tidak boleh melihat Database Akun Siswa & Akun Proktor/Guru
+                tabStudentsBtn.style.display = 'none';
+                tabStaffBtn.style.display = 'none';
+                examsTabLabel.textContent = 'Folder & Bank Soal Saya';
+                document.getElementById('proctor-exams-control-wrapper').classList.add('hidden');
+                document.getElementById('guru-workspace-wrapper').classList.remove('hidden');
+                switchProctorTab('EXAMS');
+            }
+            refreshIcons();
         }
 
-        // Ambil data siswa
-        const { data: studentData, error: studentError } =
-            await supabaseClient
-                .from('students')
-                .select('*')
-                .eq('profile_id', user.id)
-                .single();
+        function logoutCurrentUser() {
+            stopStudentTimer();
+            hideBlockedOverlay();
+            dismissCheatingWarning();
+            currentRole = null;
+            activeStaffId = null;
+            activeStudentId = null;
+            activeExamIdForStudent = null;
+            selectedFolderIdForEditor = null;
 
-        if (studentError) throw studentError;
+            document.getElementById('student-portal-view').classList.add('hidden');
+            document.getElementById('staff-dashboard-view').classList.add('hidden');
+            document.getElementById('login-view').classList.remove('hidden');
 
-        // Validasi token ruangan melalui database
-        const { data: rooms, error: roomError } =
-            await supabaseClient.rpc('validate_exam_room', {
-                p_token: tokenInput
-            });
-
-        if (roomError) throw roomError;
-
-        if (!rooms || rooms.length === 0) {
-            await supabaseClient.auth.signOut();
-            throw new Error('Token ruangan tidak valid atau tidak aktif.');
+            document.getElementById('student-login-password').value = '';
+            document.getElementById('staff-login-password').value = '';
+            refreshIcons();
         }
-
-        const supervisor = rooms[0];
-
-        // Siapkan data untuk kompatibilitas tampilan lama
-        const student = {
-            id: studentData.id,
-            profileId: user.id,
-            name: profile.full_name,
-            className: studentData.class_name,
-            status: 'STANDBY',
-            violations: 0,
-            blocked: false,
-            answers: {},
-            supervisorId: supervisor.supervisor_id,
-            supervisorName: supervisor.supervisor_name,
-            roomTokenUsed: tokenInput
-        };
-
-        currentRole = 'STUDENT';
-        activeStudentId = student.id;
-
-        document.getElementById('login-view').classList.add('hidden');
-        document.getElementById('staff-dashboard-view').classList.add('hidden');
-        document.getElementById('student-portal-view').classList.remove('hidden');
-
-        document.getElementById('student-header-name').textContent =
-            student.name;
-
-        document.getElementById('student-header-class').textContent =
-            student.className || LOCKED_CLASS_LEVEL;
-
-        document.getElementById('student-header-supervisor').textContent =
-            `${supervisor.supervisor_name} (${supervisor.room_name})`;
-
-        updateStudentViolationHUD(0);
-
-        // Simpan identitas sesi sementara untuk fungsi tampilan lama
-        window.currentSupabaseStudent = student;
-
-        hideBlockedOverlay();
-        returnStudentToLobby();
-
-        refreshIcons();
-
-        showToast('Login peserta berhasil!', 'success');
-
-    } catch (error) {
-        console.error('Student login error:', error);
-        showToast(error.message || 'Login peserta gagal!', 'error');
-    }
-}
-
-       
-async function handleProctorLogin(e) {
-    e.preventDefault();
-
-    const emailInput = document
-        .getElementById('staff-login-username')
-        .value.trim().toLowerCase();
-
-    const passwordInput = document
-        .getElementById('staff-login-password')
-        .value;
-
-    if (!emailInput || !passwordInput) {
-        showToast('Masukkan email dan password!', 'error');
-        return;
-    }
-
-    try {
-        const { data: authData, error: authError } =
-            await supabaseClient.auth.signInWithPassword({
-                email: emailInput,
-                password: passwordInput
-            });
-
-        if (authError) throw authError;
-
-        const user = authData.user;
-
-        const { data: staff, error: profileError } =
-            await supabaseClient
-                .from('profiles')
-                .select('*')
-                .eq('id', user.id)
-                .single();
-
-        if (profileError) throw profileError;
-
-        if (!['PROCTOR', 'GURU'].includes(staff.role)) {
-            await supabaseClient.auth.signOut();
-            throw new Error('Akun ini tidak memiliki akses staf.');
-        }
-
-        currentRole = staff.role;
-        activeStaffId = staff.id;
-
-        document.getElementById('login-view').classList.add('hidden');
-        document.getElementById('student-portal-view').classList.add('hidden');
-        document.getElementById('staff-dashboard-view').classList.remove('hidden');
-
-        document.getElementById('staff-header-name').textContent =
-            staff.full_name;
-
-        // Cari ruang milik proktor jika tersedia
-        let roomDisplay = '-';
-
-        if (staff.role === 'PROCTOR') {
-            const { data: room } = await supabaseClient
-                .from('rooms')
-                .select('name')
-                .eq('proctor_id', staff.id)
-                .eq('is_active', true)
-                .limit(1)
-                .maybeSingle();
-
-            if (room) roomDisplay = room.name;
-        }
-
-        document.getElementById('staff-room-token-display').textContent =
-            roomDisplay;
-
-        const roleBadge = document.getElementById('staff-header-role-badge');
-        const tabStudentsBtn = document.getElementById('staff-tab-btn-students');
-        const tabStaffBtn = document.getElementById('staff-tab-btn-staff');
-        const examsTabLabel = document.getElementById('staff-tab-exams-label');
-
-        if (currentRole === 'PROCTOR') {
-            roleBadge.textContent = 'PROKTOR';
-            roleBadge.className =
-                'px-2.5 py-0.5 rounded-lg bg-amber-500/20 border border-amber-400/40 text-amber-300 text-[10px] font-extrabold uppercase';
-
-            tabStudentsBtn.style.display = '';
-            tabStaffBtn.style.display = '';
-
-            examsTabLabel.textContent = 'Kontrol Paket Ujian';
-
-            document.getElementById('proctor-exams-control-wrapper')
-                .classList.remove('hidden');
-
-            document.getElementById('guru-workspace-wrapper')
-                .classList.add('hidden');
-
-            switchProctorTab('MONITORING');
-
-        } else {
-            roleBadge.textContent = 'GURU PENGAWAS';
-            roleBadge.className =
-                'px-2.5 py-0.5 rounded-lg bg-indigo-500/20 border border-indigo-400/40 text-indigo-200 text-[10px] font-extrabold uppercase';
-
-            tabStudentsBtn.style.display = 'none';
-            tabStaffBtn.style.display = 'none';
-
-            examsTabLabel.textContent = 'Folder & Bank Soal Saya';
-
-            document.getElementById('proctor-exams-control-wrapper')
-                .classList.add('hidden');
-
-            document.getElementById('guru-workspace-wrapper')
-                .classList.remove('hidden');
-
-            switchProctorTab('EXAMS');
-        }
-
-        refreshIcons();
-        showToast('Login staf berhasil!', 'success');
-
-    } catch (error) {
-        console.error('Staff login error:', error);
-        showToast(error.message || 'Login staf gagal!', 'error');
-    }
-}
-
-       
-async function logoutCurrentUser() {
-    stopStudentTimer();
-    hideBlockedOverlay();
-    dismissCheatingWarning();
-
-    try {
-        const { error } = await supabaseClient.auth.signOut();
-        if (error) throw error;
-    } catch (error) {
-        console.error('Logout error:', error);
-        showToast('Gagal mengakhiri sesi Supabase.', 'error');
-        return;
-    }
-
-    currentRole = null;
-    activeStaffId = null;
-    activeStudentId = null;
-    activeExamIdForStudent = null;
-    selectedFolderIdForEditor = null;
-
-    window.currentSupabaseStudent = null;
-
-    document.getElementById('student-portal-view').classList.add('hidden');
-    document.getElementById('staff-dashboard-view').classList.add('hidden');
-    document.getElementById('login-view').classList.remove('hidden');
-
-    document.getElementById('student-login-password').value = '';
-    document.getElementById('staff-login-password').value = '';
-
-    refreshIcons();
-}
-
 
         function switchProctorTab(tabName) {
             // Cegah akses tab admin oleh Guru
@@ -4119,105 +3961,112 @@ async function logoutCurrentUser() {
             window.print();
         }
 
-      
-window.addEventListener('DOMContentLoaded', async () => {
-    loadAllData(true);
-
+        // INISIALISASI SAAT HALAMAN DIMUAT
+       window.addEventListener('DOMContentLoaded', async () => {
+    await loadAllData(true);
     fillRandomStudentPasswordInput();
     fillRandomStaffPasswordInput();
     fillRandomStaffTokenInput();
-
     refreshIcons();
-
-    // Test koneksi Supabase
-    await testSupabaseConnection();
 });
-
     </script>
 <script>
-
 // =========================================================
-// SUPABASE CONFIGURATION
+// KONFIGURASI SUPABASE CLOUD & REALTIME
 // =========================================================
+const SUPABASE_URL = 'https://mrwxpbfqevnnwovwiwhp.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1yd3hwYmZxZXZubndvdndpd2hwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTUzNzY0NzIsImV4cCI6MjExMDk1MjQ3Mn0.9rARH4DvmtO9PlBIpNbNiKDLL2MSxw8oj7C2MuPPhm0';
+const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-const SUPABASE_URL = "https://kqpvytjmenuerymhojvz.supabase.co";
-const SUPABASE_PUBLISHABLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtxcHZ5dGptZW51ZXJ5bWhvanZ6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTUzNjI1MzgsImV4cCI6MjExMDkzODUzOH0.JiLuT8CfCYJEej8OLvOV_EgeR7g9mwaSuiBYJ5h313w";
+// Melacak ID yang tersimpan di cloud agar fitur Hapus ikut menghapus data di Supabase
+const cloudSyncedIds = {
+    staff: new Set(),
+    students: new Set(),
+    exams: new Set(),
+    questions: new Set()
+};
 
-const supabaseClient = window.supabase.createClient(
-    SUPABASE_URL,
-    SUPABASE_PUBLISHABLE_KEY
-);
+let isSyncingToCloud = false;
 
-// Status koneksi Supabase
-let supabaseConnected = false;
-
-// =========================================================
-// TEST KONEKSI SUPABASE
-// =========================================================
-
-async function testSupabaseConnection() {
+async function loadAllData(initSave = false) {
     try {
-        const { data, error } = await supabaseClient
-            .from('exams')
-            .select('id')
-            .limit(1);
+        const [resStaff, resStudents, resExams, resQuestions] = await Promise.all([
+            sbClient.from('tka_staff').select('*'),
+            sbClient.from('tka_students').select('*'),
+            sbClient.from('tka_exams').select('*'),
+            sbClient.from('tka_questions').select('*')
+        ]);
 
-        if (error) throw error;
-
-        supabaseConnected = true;
-
-        console.log("Supabase berhasil terhubung!");
-        console.log("Data ujian:", data);
-
-        return true;
-
-    } catch (error) {
-        supabaseConnected = false;
-
-        console.error("Supabase connection error:", error);
-
-        return false;
-    }
-}
-
-
-async function createEduGuardAccount(account) {
-    try {
-        const { data, error } = await supabaseClient.functions.invoke(
-            'create-account',
-            {
-                body: {
-                    email: account.email,
-                    password: account.password,
-                    full_name: account.full_name,
-                    role: account.role,
-                    class_name: account.class_name || ''
-                }
-            }
-        );
-
-        if (error) throw error;
-        if (!data?.success) {
-            throw new Error(data?.error || 'Pembuatan akun gagal.');
+        if (resStaff.data) {
+            staffList = resStaff.data;
+            cloudSyncedIds.staff = new Set(staffList.map(i => i.id));
+        }
+        if (resStudents.data) {
+            studentsList = resStudents.data;
+            cloudSyncedIds.students = new Set(studentsList.map(i => i.id));
+        }
+        if (resExams.data) {
+            examsList = resExams.data;
+            cloudSyncedIds.exams = new Set(examsList.map(i => i.id));
+        }
+        if (resQuestions.data) {
+            questionsList = resQuestions.data;
+            cloudSyncedIds.questions = new Set(questionsList.map(i => i.id));
         }
 
-        showToast('Akun berhasil dibuat!', 'success');
-
-        console.log('Akun berhasil dibuat:', data.user);
-
-        return data.user;
-
-    } catch (error) {
-        console.error('Create account error:', error);
-
-        showToast(
-            error.message || 'Gagal membuat akun.',
-            'error'
-        );
-
-        return null;
+        ensureDefaultProctorAccount();
+        if (initSave) await saveAllData();
+        populateRegisteredStudentsDatalist();
+        refreshCurrentActiveUI();
+    } catch (err) {
+        console.error('Gagal memuat data dari Supabase:', err);
+        showToast('Gagal terhubung ke database Supabase. Periksa koneksi internet.', 'error');
     }
 }
+
+async function syncTableToSupabase(tableName, currentArray, keyName) {
+    const currentIds = new Set(currentArray.map(item => item.id));
+    const deletedIds = [...cloudSyncedIds[keyName]].filter(id => !currentIds.has(id));
+
+    if (deletedIds.length > 0) {
+        await sbClient.from(tableName).delete().in('id', deletedIds);
+    }
+    if (currentArray.length > 0) {
+        const { error } = await sbClient.from(tableName).upsert(currentArray, { onConflict: 'id' });
+        if (error) console.error(`Error upsert ${tableName}:`, error);
+    }
+    cloudSyncedIds[keyName] = currentIds;
+}
+
+async function saveAllData() {
+    if (isSyncingToCloud) return;
+    isSyncingToCloud = true;
+    try {
+        ensureDefaultProctorAccount();
+        await Promise.all([
+            syncTableToSupabase('tka_staff', staffList, 'staff'),
+            syncTableToSupabase('tka_students', studentsList, 'students'),
+            syncTableToSupabase('tka_exams', examsList, 'exams'),
+            syncTableToSupabase('tka_questions', questionsList, 'questions')
+        ]);
+    } finally {
+        isSyncingToCloud = false;
+    }
+}
+
+function broadcastSync(eventType = 'UPDATE', payload = {}) {
+    saveAllData();
+}
+
+// Listener Realtime Supabase (Menggantikan BroadcastChannel antarperangkat)
+sbClient
+    .channel('eduguard-tka-realtime')
+    .on('postgres_changes', { event: '*', schema: 'public' }, () => {
+        if (!isSyncingToCloud) {
+            loadAllData(false);
+        }
+    })
+    .subscribe();
 
 </script>
 </body>
