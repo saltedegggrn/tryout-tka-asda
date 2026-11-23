@@ -902,15 +902,7 @@
             }
         };
 
-        const DEFAULT_PROCTOR_ACCOUNT = {
-            id: 'staff_proktor_utama',
-            name: 'Proktor Utama',
-            role: 'PROCTOR',
-            username: 'proktor',
-            password: 'guru123',
-            roomToken: 'PRO-901'
-        };
-
+        
         let staffList = [];
         let studentsList = [];
         let examsList = [];
@@ -1019,14 +1011,7 @@
         // =========================================================
         // PERSISTENSI DATA & SINKRONISASI REALTIME
         // =========================================================
-        function ensureDefaultProctorAccount() {
-            if (!Array.isArray(staffList)) staffList = [];
-            const hasProctor = staffList.some(st => String(st.username || '').trim().toLowerCase() === 'proktor');
-            if (!hasProctor) {
-                staffList.unshift({ ...DEFAULT_PROCTOR_ACCOUNT });
-            }
-        }
-
+        
         function loadAllData(initSave = false) {
             try {
                 const rawStaff = safeStorage.getItem(STORAGE_KEYS.STAFF);
@@ -1034,8 +1019,7 @@
             } catch (e) {
                 staffList = [{ ...DEFAULT_PROCTOR_ACCOUNT }];
             }
-            ensureDefaultProctorAccount();
-
+           
             try {
                 const rawStudents = safeStorage.getItem(STORAGE_KEYS.STUDENTS);
                 studentsList = rawStudents ? JSON.parse(rawStudents) : [];
@@ -1065,7 +1049,7 @@
         }
 
         function saveAllData() {
-            ensureDefaultProctorAccount();
+          
             safeStorage.setItem(STORAGE_KEYS.STAFF, JSON.stringify(staffList));
             safeStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(studentsList));
             safeStorage.setItem(STORAGE_KEYS.EXAMS, JSON.stringify(examsList));
@@ -3840,10 +3824,6 @@
             if (currentRole !== 'PROCTOR') return;
             const target = staffList.find(st => st.id === staffId);
             if (!target) return;
-            if (target.username.toLowerCase() === 'proktor') {
-                showToast('Password akun Proktor Utama tidak diacak otomatis demi keamanan akses.', 'warning');
-                return;
-            }
             const newPass = generateReadableRandomPassword(6);
             target.password = newPass;
             broadcastSync('STAFF_PASSWORD_RANDOMIZED', { staffId });
@@ -3896,7 +3876,7 @@
         function deleteStaffAccount(staffId) {
             if (currentRole !== 'PROCTOR') return;
             const target = staffList.find(st => st.id === staffId);
-            if (!target || target.username.toLowerCase() === 'proktor') {
+            if (!target) {
                 showToast('Akun Proktor Utama tidak dapat dihapus.', 'warning');
                 return;
             }
@@ -3910,7 +3890,7 @@
             const grid = document.getElementById('staff-accounts-grid');
             if (!grid) return;
             grid.innerHTML = staffList.map(st => {
-                const isMainProctor = st.username.toLowerCase() === 'proktor';
+                const isMainProctor = st.id === activeStaffId;
                 return `
                     <div class="p-4 rounded-2xl border border-slate-200 bg-white space-y-2.5 shadow-sm">
                         <div class="flex items-start justify-between gap-2">
@@ -4014,7 +3994,7 @@ async function loadAllData(initSave = false) {
             cloudSyncedIds.questions = new Set(questionsList.map(i => i.id));
         }
 
-        ensureDefaultProctorAccount();
+        
         if (initSave) await saveAllData();
         populateRegisteredStudentsDatalist();
         refreshCurrentActiveUI();
@@ -4042,7 +4022,6 @@ async function saveAllData() {
     if (isSyncingToCloud) return;
     isSyncingToCloud = true;
     try {
-        ensureDefaultProctorAccount();
         await Promise.all([
             syncTableToSupabase('tka_staff', staffList, 'staff'),
             syncTableToSupabase('tka_students', studentsList, 'students'),
