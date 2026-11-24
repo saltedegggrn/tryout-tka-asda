@@ -6,8 +6,8 @@
     <title>EduGuard TryOut TKA — SMP ASSA'ADAH SURABAYA</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -423,10 +423,10 @@
             <!-- ===================================================== -->
             <section id="staff-panel-monitoring" class="space-y-4">
                 <div class="bg-white rounded-3xl border border-slate-200 p-5 shadow-sm space-y-4">
-                    <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                    <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
                         <div>
                             <h2 class="text-base sm:text-lg font-extrabold text-slate-900">Pemantauan Peserta TryOut TKA &amp; Laporan Nilai</h2>
-                            <p id="monitoring-role-hint" class="text-xs text-slate-500">Pantau status pengerjaan siswa, blokir/buka blokir sesi, koreksi esai, dan cetak laporan statistik individu.</p>
+                            <p id="monitoring-role-hint" class="text-xs text-slate-500">Pantau status pengerjaan siswa, blokir/buka blokir sesi, reset sesi ujian, koreksi esai, dan cetak laporan statistik individu.</p>
                         </div>
                         <div class="flex flex-wrap items-center gap-2">
                             <input type="text" id="monitoring-search-input" oninput="renderMonitoringTable()"
@@ -435,10 +435,17 @@
                             <select id="monitoring-status-filter" onchange="renderMonitoringTable()"
                                 class="px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold bg-white">
                                 <option value="ALL">Semua Status</option>
+                                <option value="BELUM">Belum Mulai / Direset</option>
+                                <option value="STANDBY">Standby di Ruang Tunggu</option>
                                 <option value="MENGERJAKAN">Sedang Mengerjakan</option>
                                 <option value="SELESAI">Selesai</option>
                                 <option value="TERBLOKIR">Terblokir</option>
                             </select>
+                            <button type="button" id="btn-bulk-reset-sessions" onclick="confirmBulkResetAllSessions()"
+                                class="hidden px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-extrabold flex items-center gap-1.5 shadow-sm">
+                                <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
+                                <span>Reset Semua Sesi Ujian</span>
+                            </button>
                         </div>
                     </div>
 
@@ -877,11 +884,11 @@
         const DEFAULT_CARD_TITLE = "KARTU LOGIN PESERTA TRYOUT TKA";
 
         const STORAGE_KEYS = {
-            STAFF: 'eduguard_tka_staff_v2',
-            STUDENTS: 'eduguard_tka_students_v2',
-            EXAMS: 'eduguard_tka_exams_v2',
-            QUESTIONS: 'eduguard_tka_questions_v2',
-            CARD_TITLE: 'eduguard_tka_card_title_v2'
+            STAFF: 'eduguard_tka_staff_v3',
+            STUDENTS: 'eduguard_tka_students_v3',
+            EXAMS: 'eduguard_tka_exams_v3',
+            QUESTIONS: 'eduguard_tka_questions_v3',
+            CARD_TITLE: 'eduguard_tka_card_title_v3'
         };
 
         const memoryStorageFallback = {};
@@ -902,7 +909,7 @@
             }
         };
 
-        
+       
         let staffList = [];
         let studentsList = [];
         let examsList = [];
@@ -932,10 +939,11 @@
         let syncChannel = null;
         try {
             if ('BroadcastChannel' in window) {
-                syncChannel = new BroadcastChannel('eduguard_tka_sync_v2');
-                syncChannel.onmessage = () => {
+                syncChannel = new BroadcastChannel('eduguard_tka_sync_v3');
+                syncChannel.onmessage = (ev) => {
+                    const msg = ev && ev.data ? ev.data : {};
                     loadAllData(false);
-                    refreshCurrentActiveUI();
+                    refreshCurrentActiveUI(msg.eventType, msg.payload);
                 };
             }
         } catch (e) {}
@@ -1011,19 +1019,35 @@
         // =========================================================
         // PERSISTENSI DATA & SINKRONISASI REALTIME
         // =========================================================
-        
+       
+        function normalizeStudentRecord(s) {
+            if (!s || typeof s !== 'object') return s;
+            if (!s.status) s.status = 'BELUM';
+            if (typeof s.violations !== 'number') s.violations = 0;
+            if (typeof s.blocked !== 'boolean') s.blocked = (s.status === 'TERBLOKIR');
+            if (!s.answers || typeof s.answers !== 'object') s.answers = {};
+            if (!s.essayScores || typeof s.essayScores !== 'object') s.essayScores = {};
+            if (!Array.isArray(s.questionOrder)) s.questionOrder = [];
+            if (s.examId === undefined) s.examId = s.activeExamId || '';
+            if (s.score === undefined) s.score = null;
+            return s;
+        }
+
         function loadAllData(initSave = false) {
-            try {
+           try {
                 const rawStaff = safeStorage.getItem(STORAGE_KEYS.STAFF);
-                staffList = rawStaff ? JSON.parse(rawStaff) : [{ ...DEFAULT_PROCTOR_ACCOUNT }];
+                staffList = rawStaff ? JSON.parse(rawStaff) : [];
+                if (!Array.isArray(staffList)) staffList = [];
             } catch (e) {
-                staffList = [{ ...DEFAULT_PROCTOR_ACCOUNT }];
+                staffList = [];
             }
            
+
             try {
                 const rawStudents = safeStorage.getItem(STORAGE_KEYS.STUDENTS);
                 studentsList = rawStudents ? JSON.parse(rawStudents) : [];
                 if (!Array.isArray(studentsList)) studentsList = [];
+                studentsList = studentsList.map(normalizeStudentRecord);
             } catch (e) {
                 studentsList = [];
             }
@@ -1049,7 +1073,7 @@
         }
 
         function saveAllData() {
-          
+        
             safeStorage.setItem(STORAGE_KEYS.STAFF, JSON.stringify(staffList));
             safeStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(studentsList));
             safeStorage.setItem(STORAGE_KEYS.EXAMS, JSON.stringify(examsList));
@@ -1068,17 +1092,30 @@
         window.addEventListener('storage', (ev) => {
             if (Object.values(STORAGE_KEYS).includes(ev.key)) {
                 loadAllData(false);
-                refreshCurrentActiveUI();
+                refreshCurrentActiveUI('STORAGE_SYNC', {});
             }
         });
 
-        function refreshCurrentActiveUI() {
+        function refreshCurrentActiveUI(eventType = '', payload = {}) {
             if (currentRole === 'STUDENT' && activeStudentId) {
                 const std = studentsList.find(s => s.id === activeStudentId);
                 if (!std) {
                     logoutCurrentUser();
                     return;
                 }
+
+                // Jika sesi siswa ini baru saja direset oleh Proktor (status kembali ke 'BELUM' & examId kosong),
+                // kembalikan browser siswa ke layar login awal secara otomatis!
+                const wasResetForThisStudent =
+                    (eventType === 'SESSION_RESET' && payload && (payload.studentId === 'ALL' || payload.studentId === std.id)) ||
+                    (std.status === 'BELUM' && !std.examId && !std.supervisorId);
+
+                if (wasResetForThisStudent) {
+                    logoutCurrentUser();
+                    showToast('Sesi ujian Anda telah direset oleh Proktor. Silakan login kembali.', 'warning');
+                    return;
+                }
+
                 if (isStudentBlocked(std)) {
                     showBlockedOverlay(std);
                     return;
@@ -1097,6 +1134,9 @@
                         finishStudentExamNow();
                         return;
                     }
+                    // PENTING: Jangan mengacak ulang urutan soal saat sinkronisasi realtime.
+                    // Cukup perbarui grid navigasi jika diperlukan sambil mempertahankan currentStudentQuestionIndex & std.questionOrder.
+                    renderQuestionNavGrid();
                 } else {
                     renderStudentLobbyExams();
                 }
@@ -1117,7 +1157,6 @@
 
         // =========================================================
         // GENERATOR ACAK TOKEN & ACAK PASSWORD (BEBAS KARAKTER AMBIGU)
-        // Menghindari karakter membingungkan: O, 0, I, 1, L
         // =========================================================
         const SAFE_ALPHANUM_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
@@ -1217,7 +1256,9 @@
             student.supervisorId = supervisor.id;
             student.supervisorName = supervisor.name;
             student.roomTokenUsed = supervisor.roomToken;
-            if (!student.status || student.status === 'OFFLINE') student.status = 'STANDBY';
+            if (!student.status || student.status === 'BELUM' || student.status === 'OFFLINE') {
+                student.status = 'STANDBY';
+            }
             broadcastSync('STUDENT_LOGGED_IN', { studentId: student.id });
 
             document.getElementById('login-view').classList.add('hidden');
@@ -1233,14 +1274,24 @@
                 showBlockedOverlay(student);
             } else {
                 hideBlockedOverlay();
-                returnStudentToLobby();
+                // Jika siswa sudah memiliki sesi pengerjaan aktif pada paket yang masih berlangsung, lanjutkan langsung dengan questionOrder tersimpan
+                const existingExamId = student.examId || student.activeExamId;
+                const runningExam = existingExamId
+                    ? examsList.find(ex => ex.id === existingExamId && ex.submissionStatus === 'SUBMITTED' && ex.status === 'BERLANGSUNG')
+                    : null;
+
+                if (runningExam && student.status === 'MENGERJAKAN') {
+                    startStudentExamSession(runningExam.id);
+                } else {
+                    returnStudentToLobby();
+                }
             }
             refreshIcons();
         }
 
-        async function handleProctorLogin(e) {
-    e.preventDefault();
-    await loadAllData(false);
+        function handleProctorLogin(e) {
+            e.preventDefault();
+            loadAllData(false);
             const usernameInput = document.getElementById('staff-login-username').value.trim().toLowerCase();
             const passwordInput = document.getElementById('staff-login-password').value.trim();
 
@@ -1268,12 +1319,14 @@
             const tabStudentsBtn = document.getElementById('staff-tab-btn-students');
             const tabStaffBtn = document.getElementById('staff-tab-btn-staff');
             const examsTabLabel = document.getElementById('staff-tab-exams-label');
+            const bulkResetBtn = document.getElementById('btn-bulk-reset-sessions');
 
             if (currentRole === 'PROCTOR') {
                 roleBadge.textContent = 'PROKTOR';
                 roleBadge.className = 'px-2.5 py-0.5 rounded-lg bg-amber-500/20 border border-amber-400/40 text-amber-300 text-[10px] font-extrabold uppercase';
                 tabStudentsBtn.style.display = '';
                 tabStaffBtn.style.display = '';
+                if (bulkResetBtn) bulkResetBtn.classList.remove('hidden');
                 examsTabLabel.textContent = 'Kontrol Paket Ujian';
                 document.getElementById('proctor-exams-control-wrapper').classList.remove('hidden');
                 document.getElementById('guru-workspace-wrapper').classList.add('hidden');
@@ -1281,9 +1334,9 @@
             } else {
                 roleBadge.textContent = 'GURU PENGAWAS';
                 roleBadge.className = 'px-2.5 py-0.5 rounded-lg bg-indigo-500/20 border border-indigo-400/40 text-indigo-200 text-[10px] font-extrabold uppercase';
-                // Isolasi ketat: Guru tidak boleh melihat Database Akun Siswa & Akun Proktor/Guru
                 tabStudentsBtn.style.display = 'none';
                 tabStaffBtn.style.display = 'none';
+                if (bulkResetBtn) bulkResetBtn.classList.add('hidden');
                 examsTabLabel.textContent = 'Folder & Bank Soal Saya';
                 document.getElementById('proctor-exams-control-wrapper').classList.add('hidden');
                 document.getElementById('guru-workspace-wrapper').classList.remove('hidden');
@@ -1312,7 +1365,6 @@
         }
 
         function switchProctorTab(tabName) {
-            // Cegah akses tab admin oleh Guru
             if (currentRole !== 'PROCTOR' && (tabName === 'STUDENTS' || tabName === 'STAFF')) {
                 tabName = 'EXAMS';
             }
@@ -1404,7 +1456,7 @@
         }
 
         // =========================================================
-        // ANTI-CHEATING & BLOKIR MANUAL / OTOMATIS
+        // ANTI-CHEATING, BLOKIR MANUAL / OTOMATIS & RESET SESI SISWA
         // =========================================================
         function isStudentBlocked(student) {
             return Boolean(student && (student.blocked === true || student.status === 'TERBLOKIR'));
@@ -1523,10 +1575,76 @@
             std.blocked = false;
             std.violations = 0;
             std.blockReason = '';
-            std.status = std.activeExamId ? 'MENGERJAKAN' : 'STANDBY';
+            const activeEx = std.examId || std.activeExamId;
+            std.status = activeEx ? 'MENGERJAKAN' : 'STANDBY';
             broadcastSync('STUDENT_UNBLOCKED', { studentId: std.id });
             renderMonitoringTable();
             showToast(`Blokir sesi ${std.name} telah dibuka (pelanggaran direset ke 0/3).`, 'success');
+        }
+
+        // Mengosongkan progres ujian siswa sambil mempertahankan id, name (username), className, dan password
+        function applyCleanResetToStudentObject(std) {
+            if (!std) return;
+            std.status = 'BELUM';
+            std.score = null;
+            std.lastScore = null;
+            std.essayScores = {};
+            std.manualEssayScores = {};
+            std.answers = {};
+            std.violations = 0;
+            std.blocked = false;
+            std.blockReason = '';
+            std.supervisorId = '';
+            std.supervisorName = '';
+            std.roomTokenUsed = '';
+            std.examId = '';
+            std.activeExamId = '';
+            std.activeExamTitle = '';
+            std.startedAt = null;
+            std.finishedAt = null;
+            std.questionOrder = [];
+        }
+
+        function confirmResetSingleStudentSession(studentId) {
+            if (currentRole !== 'PROCTOR') return;
+            const std = studentsList.find(s => s.id === studentId);
+            if (!std) return;
+
+            openCustomConfirm({
+                title: `Reset Sesi Ujian "${std.name}"?`,
+                subtitle: `Peserta ${std.className || LOCKED_CLASS_LEVEL}`,
+                body: `Seluruh jawaban, skor, nilai esai, riwayat pelanggaran, status blokir, dan urutan soal acak milik <strong>${escapeHTML(std.name)}</strong> akan dikosongkan.<br><br><span class="text-emerald-700 font-bold">Nama/Username, Kelas, dan Password akun peserta tetap aman &amp; tidak berubah.</span>`,
+                acceptText: 'Ya, Reset Sesi Siswa',
+                danger: true,
+                onAccept: () => {
+                    applyCleanResetToStudentObject(std);
+                    broadcastSync('SESSION_RESET', { studentId: std.id });
+                    renderMonitoringTable();
+                    showToast(`Sesi ujian "${std.name}" berhasil direset (akun & password tetap utuh).`, 'success');
+                }
+            });
+        }
+
+        function confirmBulkResetAllSessions() {
+            if (currentRole !== 'PROCTOR') return;
+            if (studentsList.length === 0) {
+                showToast('Belum ada peserta Kelas 9 terdaftar.', 'warning');
+                return;
+            }
+
+            openCustomConfirm({
+                title: 'Reset Semua Sesi Ujian Peserta Kelas 9?',
+                subtitle: `Total ${studentsList.length} Peserta Terdaftar`,
+                body: `Tindakan ini akan mengosongkan seluruh jawaban, nilai/skor, status blokir, pelanggaran, dan urutan soal acak untuk semua <strong>${studentsList.length} peserta</strong>, serta mengeluarkan sesi siswa yang sedang terbuka ke halaman login.<br><br><span class="text-emerald-700 font-bold">Seluruh Nama/Username, Kelas, dan Password siswa tetap utuh.</span>`,
+                acceptText: 'Ya, Reset Semua Sesi',
+                danger: true,
+                onAccept: () => {
+                    studentsList.forEach(std => applyCleanResetToStudentObject(std));
+                    broadcastSync('SESSION_RESET', { studentId: 'ALL' });
+                    renderMonitoringTable();
+                    showToast(`Seluruh sesi ujian (${studentsList.length} peserta) berhasil direset bersih!`, 'success');
+                }
+            });
         }
 
         // =========================================================
@@ -1635,7 +1753,6 @@
             const container = document.getElementById('guru-folders-list');
             if (!container) return;
 
-            // Isolasi kepemilikan penuh: hanya folder milik Guru yang sedang login
             const myFolders = examsList.filter(ex => ex.ownerId === activeStaffId);
 
             if (myFolders.length === 0) {
@@ -2544,8 +2661,10 @@
             if (!exam) return;
             exam.status = 'SELESAI';
             studentsList.forEach(s => {
-                if (s.activeExamId === examId && s.status === 'MENGERJAKAN') {
+                const sExamId = s.examId || s.activeExamId;
+                if (sExamId === examId && s.status === 'MENGERJAKAN') {
                     s.status = 'SELESAI';
+                    s.finishedAt = Date.now();
                     recalculateStudentScore(s);
                 }
             });
@@ -2583,6 +2702,43 @@
                     showToast(`Paket "${exam.title}" dikembalikan ke Draf Guru.`, 'info');
                 }
             });
+        }
+
+        // =========================================================
+        // PENGACAKAN URUTAN SOAL STATIS PER SISWA DI AWAL SESI
+        // =========================================================
+        function shuffleQuestionIdsFisherYates(ids) {
+            const arr = [...ids];
+            for (let i = arr.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                const tmp = arr[i];
+                arr[i] = arr[j];
+                arr[j] = tmp;
+            }
+            return arr;
+        }
+
+        // Mengambil daftar butir soal terurut berdasarkan student.questionOrder yang sudah dikunci di awal sesi
+        function getOrderedQuestionsForStudent(std, examId) {
+            const rawExamQs = questionsList.filter(q => q.examId === examId);
+            if (!std || rawExamQs.length === 0) return rawExamQs;
+
+            const qMap = new Map(rawExamQs.map(q => [q.id, q]));
+            const validIds = new Set(rawExamQs.map(q => q.id));
+
+            // Jika student.questionOrder sudah ada dan cocok dengan paket ujian ini, gunakan urutan statis tersebut!
+            if (Array.isArray(std.questionOrder) && std.questionOrder.length > 0) {
+                const filteredOrder = std.questionOrder.filter(id => validIds.has(id));
+                if (filteredOrder.length === rawExamQs.length) {
+                    return filteredOrder.map(id => qMap.get(id)).filter(Boolean);
+                }
+            }
+
+            // Jika belum ada (awal sesi baru atau setelah reset sesi), acak sekali saja dan simpan permanen ke student.questionOrder
+            const shuffledIds = shuffleQuestionIdsFisherYates(rawExamQs.map(q => q.id));
+            std.questionOrder = shuffledIds;
+            broadcastSync('STUDENT_QUESTION_ORDER_LOCKED', { studentId: std.id, examId });
+            return shuffledIds.map(id => qMap.get(id)).filter(Boolean);
         }
 
         // =========================================================
@@ -2643,18 +2799,34 @@
             const exam = examsList.find(ex => ex.id === examId && ex.status === 'BERLANGSUNG');
             if (!std || !exam) return;
 
-            const examQs = questionsList.filter(q => q.examId === exam.id);
-            if (examQs.length === 0) {
+            const rawExamQs = questionsList.filter(q => q.examId === exam.id);
+            if (rawExamQs.length === 0) {
                 showToast('Paket soal ini belum memiliki butir soal.', 'error');
                 return;
             }
 
+            // Jika siswa berpindah ke paket ujian berbeda dari sesi sebelumnya, reset urutan & jawaban untuk paket baru
+            const previousExamId = std.examId || std.activeExamId;
+            if (previousExamId && previousExamId !== exam.id) {
+                std.answers = {};
+                std.essayScores = {};
+                std.manualEssayScores = {};
+                std.questionOrder = [];
+                std.startedAt = null;
+                std.finishedAt = null;
+            }
+
             activeExamIdForStudent = exam.id;
             currentStudentQuestionIndex = 0;
+            std.examId = exam.id;
             std.activeExamId = exam.id;
             std.activeExamTitle = exam.title;
             std.status = 'MENGERJAKAN';
+            if (!std.startedAt) std.startedAt = Date.now();
             if (!std.answers) std.answers = {};
+
+            // Kunci urutan soal acak sekali saja di awal sesi (atau pakai ulang jika sudah tersimpan)
+            getOrderedQuestionsForStudent(std, exam.id);
             updateStudentViolationHUD(std.violations || 0);
 
             document.getElementById('student-lobby-section').classList.add('hidden');
@@ -2662,7 +2834,12 @@
             document.getElementById('student-exam-section').classList.remove('hidden');
             document.getElementById('student-active-exam-title').textContent = exam.title;
 
-            startStudentTimer(exam.durationMinutes * 60);
+            // Hitung sisa waktu apabila siswa melanjut sesi yang sudah berjalan
+            const totalDurationSec = exam.durationMinutes * 60;
+            const elapsedSec = std.startedAt ? Math.floor((Date.now() - std.startedAt) / 1000) : 0;
+            const remainingSec = Math.max(10, totalDurationSec - elapsedSec);
+
+            startStudentTimer(remainingSec);
             broadcastSync('STUDENT_STARTED_EXAM', { studentId: std.id, examId: exam.id });
             renderStudentQuestion();
             renderQuestionNavGrid();
@@ -2699,8 +2876,7 @@
             }
         }
 
-        // Pengacakan deterministik (Seeded PRNG) agar urutan opsi kanan teracak rapi,
-        // tidak urut 1-A, 2-B, 3-C, namun tetap stabil saat siswa berpindah antar nomor soal
+        // Pengacakan deterministik opsi kanan soal Menjodohkan
         function getDeterministicShuffledRightOptions(q, seedKey = 'default') {
             const pairs = Array.isArray(q.matchPairs) ? q.matchPairs : [];
             const distractors = Array.isArray(q.matchDistractors) ? q.matchDistractors : [];
@@ -2748,7 +2924,6 @@
                 shuffled[j] = tmp;
             }
 
-            // Hindari urutan identik 1-A, 2-B, 3-C
             const isIdenticalOrder = pairs.length > 1 && pairs.every((_, idx) => shuffled[idx] && shuffled[idx].origKey === `P_${idx}`);
             if (isIdenticalOrder) {
                 const first = shuffled.shift();
@@ -2760,8 +2935,11 @@
 
         function renderStudentQuestion() {
             const std = studentsList.find(s => s.id === activeStudentId);
-            const examQs = questionsList.filter(q => q.examId === activeExamIdForStudent);
-            if (!std || examQs.length === 0) return;
+            if (!std || !activeExamIdForStudent) return;
+
+            // Selalu baca urutan soal statis milik siswa ini dari std.questionOrder
+            const examQs = getOrderedQuestionsForStudent(std, activeExamIdForStudent);
+            if (examQs.length === 0) return;
 
             if (currentStudentQuestionIndex < 0) currentStudentQuestionIndex = 0;
             if (currentStudentQuestionIndex >= examQs.length) currentStudentQuestionIndex = examQs.length - 1;
@@ -3001,8 +3179,9 @@
             const grid = document.getElementById('student-question-nav-grid');
             const progressEl = document.getElementById('student-answered-progress');
             const std = studentsList.find(s => s.id === activeStudentId);
-            const examQs = questionsList.filter(q => q.examId === activeExamIdForStudent);
-            if (!grid || !std) return;
+            if (!grid || !std || !activeExamIdForStudent) return;
+
+            const examQs = getOrderedQuestionsForStudent(std, activeExamIdForStudent);
 
             let answeredCount = 0;
             grid.innerHTML = examQs.map((q, idx) => {
@@ -3040,6 +3219,7 @@
             if (!std) return;
             stopStudentTimer();
             std.status = 'SELESAI';
+            std.finishedAt = Date.now();
             const stats = recalculateStudentScore(std);
             broadcastSync('STUDENT_FINISHED_EXAM', { studentId: std.id });
 
@@ -3112,7 +3292,7 @@
             }
 
             if (q.type === 'ESSAY') {
-                const manualScores = std.manualEssayScores || {};
+                const manualScores = std.essayScores || std.manualEssayScores || {};
                 const manualVal = manualScores[q.id];
                 if (typeof manualVal === 'number') {
                     const clamped = Math.max(0, Math.min(maxPts, manualVal));
@@ -3125,7 +3305,16 @@
         }
 
         function recalculateStudentScore(std) {
-            const examQs = std.activeExamId ? questionsList.filter(q => q.examId === std.activeExamId) : [];
+            const targetExamId = std.examId || std.activeExamId;
+            if (!targetExamId) {
+                std.score = null;
+                std.lastScore = null;
+                return { earnedTotal: 0, maxTotal: 0, score100: 0, correctNumbers: [], incorrectNumbers: [], details: [], typeStats: {} };
+            }
+
+            const baseExamQs = questionsList.filter(q => q.examId === targetExamId);
+            const orderedExamQs = getOrderedQuestionsForStudent(std, targetExamId);
+
             let earnedTotal = 0;
             let maxTotal = 0;
             const correctNumbers = [];
@@ -3133,12 +3322,16 @@
             const details = [];
             const typeStats = {};
 
-            examQs.forEach((q, idx) => {
+            orderedExamQs.forEach((q, displayIdx) => {
                 const res = evaluateSingleQuestionForStudent(std, q);
+                const bankIdx = baseExamQs.findIndex(item => item.id === q.id);
+                const displayNo = displayIdx + 1;
+                const bankNo = bankIdx !== -1 ? bankIdx + 1 : displayNo;
+
                 earnedTotal += res.earned;
                 maxTotal += res.max;
-                if (res.status === 'BENAR') correctNumbers.push(idx + 1);
-                else incorrectNumbers.push(idx + 1);
+                if (res.status === 'BENAR') correctNumbers.push(displayNo);
+                else incorrectNumbers.push(displayNo);
 
                 const tLabel = getQuestionTypeLabel(q.type);
                 if (!typeStats[tLabel]) typeStats[tLabel] = { count: 0, earned: 0, max: 0 };
@@ -3146,10 +3339,11 @@
                 typeStats[tLabel].earned += res.earned;
                 typeStats[tLabel].max += res.max;
 
-                details.push({ number: idx + 1, question: q, ...res });
+                details.push({ number: displayNo, bankNumber: bankNo, question: q, ...res });
             });
 
             const score100 = maxTotal > 0 ? Math.round((earnedTotal / maxTotal) * 1000) / 10 : 0;
+            std.score = score100;
             std.lastScore = score100;
             return { earnedTotal, maxTotal, score100, correctNumbers, incorrectNumbers, details, typeStats };
         }
@@ -3166,25 +3360,28 @@
 
             const filtered = studentsList.filter(s => {
                 if (currentRole === 'GURU' && s.supervisorId !== activeStaffId) return false;
-                if (statusFilter !== 'ALL' && (s.status || 'STANDBY') !== statusFilter) return false;
+                const currentSt = isStudentBlocked(s) ? 'TERBLOKIR' : (s.status || 'BELUM');
+                if (statusFilter !== 'ALL' && currentSt !== statusFilter) return false;
                 if (search && !s.name.toLowerCase().includes(search) && !(s.className || '').toLowerCase().includes(search)) return false;
                 return true;
             });
 
             if (filtered.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="5" class="py-8 text-center text-xs font-bold text-slate-400">Belum ada data peserta aktif pada filter ini.</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="5" class="py-8 text-center text-xs font-bold text-slate-400">Belum ada data peserta pada filter ini.</td></tr>`;
                 return;
             }
 
             tbody.innerHTML = filtered.map(s => {
                 const blocked = isStudentBlocked(s);
-                const status = blocked ? 'TERBLOKIR' : (s.status || 'STANDBY');
-                let statusBadge = `<span class="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-extrabold">STANDBY</span>`;
-                if (status === 'MENGERJAKAN') statusBadge = `<span class="px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-extrabold">MENGERJAKAN</span>`;
+                const status = blocked ? 'TERBLOKIR' : (s.status || 'BELUM');
+                let statusBadge = `<span class="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[10px] font-extrabold">BELUM MULAI</span>`;
+                if (status === 'STANDBY') statusBadge = `<span class="px-2.5 py-0.5 rounded-full bg-sky-100 text-sky-700 text-[10px] font-extrabold">STANDBY</span>`;
+                else if (status === 'MENGERJAKAN') statusBadge = `<span class="px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-extrabold">MENGERJAKAN</span>`;
                 else if (status === 'SELESAI') statusBadge = `<span class="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-extrabold">SELESAI</span>`;
                 else if (status === 'TERBLOKIR') statusBadge = `<span class="px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-700 text-[10px] font-extrabold">TERBLOKIR</span>`;
 
-                const stats = recalculateStudentScore(s);
+                const targetExamId = s.examId || s.activeExamId;
+                const stats = targetExamId ? recalculateStudentScore(s) : null;
 
                 return `
                     <tr class="hover:bg-slate-50/70">
@@ -3201,10 +3398,10 @@
                             ${blocked && s.blockReason ? `<div class="text-[10px] font-bold text-rose-600">${escapeHTML(s.blockReason)}</div>` : ''}
                         </td>
                         <td class="py-3 px-4">
-                            <span class="text-sm font-extrabold text-indigo-700">${s.activeExamId ? stats.score100 : '-'}</span>
+                            <span class="text-sm font-extrabold text-indigo-700">${stats ? stats.score100 : '-'}</span>
                         </td>
                         <td class="py-3 px-4 text-right space-x-1.5 whitespace-nowrap">
-                            ${s.activeExamId ? `
+                            ${targetExamId ? `
                                 <button type="button" onclick="openStudentReportModal('${s.id}')"
                                     class="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-extrabold">
                                     Laporan &amp; PDF
@@ -3221,6 +3418,13 @@
                                     Blokir
                                 </button>
                             `}
+                            ${currentRole === 'PROCTOR' ? `
+                                <button type="button" onclick="confirmResetSingleStudentSession('${s.id}')"
+                                    class="px-3 py-1.5 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-900 text-[11px] font-extrabold"
+                                    title="Reset skor, jawaban, blokir & urutan soal tanpa menghapus akun">
+                                    Reset Sesi
+                                </button>
+                            ` : ''}
                         </td>
                     </tr>
                 `;
@@ -3284,8 +3488,11 @@
         function updateManualEssayScore(studentId, qId, maxPts, val) {
             const std = studentsList.find(s => s.id === studentId);
             if (!std) return;
+            if (!std.essayScores) std.essayScores = {};
             if (!std.manualEssayScores) std.manualEssayScores = {};
-            std.manualEssayScores[qId] = Math.max(0, Math.min(maxPts, parseFloat(val) || 0));
+            const clamped = Math.max(0, Math.min(maxPts, parseFloat(val) || 0));
+            std.essayScores[qId] = clamped;
+            std.manualEssayScores[qId] = clamped;
             recalculateStudentScore(std);
             broadcastSync('ESSAY_GRADED', { studentId });
             openStudentReportModal(studentId);
@@ -3332,7 +3539,7 @@
                         <p class="text-xl font-extrabold text-indigo-700 mt-0.5">${stats.score100}</p>
                     </div>
                     <div class="p-3.5 rounded-2xl border border-emerald-200 bg-emerald-50/50">
-                        <span class="text-[10px] font-extrabold text-emerald-700 uppercase">Nomor Soal Benar</span>
+                        <span class="text-[10px] font-extrabold text-emerald-700 uppercase">Nomor Soal Benar (Urutan Siswa)</span>
                         <p class="text-xs font-extrabold text-emerald-800 mt-1">${stats.correctNumbers.length > 0 ? stats.correctNumbers.join(', ') : 'Tidak ada'}</p>
                     </div>
                     <div class="p-3.5 rounded-2xl border border-rose-200 bg-rose-50/50">
@@ -3350,7 +3557,7 @@
 
                 <!-- Rincian Per Butir Soal -->
                 <div class="space-y-2.5">
-                    <h3 class="text-xs font-extrabold uppercase text-slate-700">Analisis Jawaban Per Butir Soal</h3>
+                    <h3 class="text-xs font-extrabold uppercase text-slate-700">Analisis Jawaban Per Butir Soal (Berdasarkan Urutan Tampil Peserta)</h3>
                     <div class="space-y-2">
                         ${stats.details.map(d => {
                             const badgeColor = d.status === 'BENAR'
@@ -3361,6 +3568,7 @@
                                     <div class="flex flex-wrap items-center justify-between gap-2">
                                         <div class="flex items-center gap-2">
                                             <span class="px-2 py-0.5 rounded bg-slate-900 text-white text-[11px] font-extrabold">No. ${d.number}</span>
+                                            <span class="px-2 py-0.5 rounded bg-slate-100 text-slate-600 text-[10px] font-bold">Bank Soal #${d.bankNumber}</span>
                                             <span class="text-[11px] font-bold text-slate-500">${getQuestionTypeLabel(d.question.type)}</span>
                                         </div>
                                         <span class="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold ${badgeColor}">${d.status} (${d.earned}/${d.max} Poin)</span>
@@ -3543,16 +3751,13 @@
             if (!name) return;
             if (!password) password = generateReadableRandomPassword(6);
 
-            studentsList.push({
+            studentsList.push(normalizeStudentRecord({
                 id: 'std_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
                 name,
                 className: rombel.toLowerCase().includes('9') ? rombel : `${LOCKED_CLASS_LEVEL} (${rombel})`,
                 password,
-                status: 'STANDBY',
-                violations: 0,
-                blocked: false,
-                answers: {}
-            });
+                status: 'BELUM'
+            }));
 
             document.getElementById('new-student-name').value = '';
             document.getElementById('new-student-password').value = generateReadableRandomPassword(6);
@@ -3598,16 +3803,13 @@
 
                 if (name) {
                     if (!password) password = generateReadableRandomPassword(6);
-                    studentsList.push({
+                    studentsList.push(normalizeStudentRecord({
                         id: 'std_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7) + '_' + added,
                         name,
                         className: rombel.toLowerCase().includes('9') ? rombel : `${LOCKED_CLASS_LEVEL} (${rombel})`,
                         password,
-                        status: 'STANDBY',
-                        violations: 0,
-                        blocked: false,
-                        answers: {}
-                    });
+                        status: 'BELUM'
+                    }));
                     added++;
                 }
             });
@@ -3821,9 +4023,11 @@
         }
 
         function randomizeSingleStaffPassword(staffId) {
-            if (currentRole !== 'PROCTOR') return;
-            const target = staffList.find(st => st.id === staffId);
-            if (!target) return;
+           if (target.id === activeStaffId) {
+                showToast('Password akun yang sedang Anda gunakan login tidak diacak otomatis.', 'warning');
+                return;
+            }
+            }
             const newPass = generateReadableRandomPassword(6);
             target.password = newPass;
             broadcastSync('STAFF_PASSWORD_RANDOMIZED', { staffId });
@@ -3874,23 +4078,24 @@
         }
 
         function deleteStaffAccount(staffId) {
-            if (currentRole !== 'PROCTOR') return;
             const target = staffList.find(st => st.id === staffId);
-            if (!target) {
-                showToast('Akun Proktor Utama tidak dapat dihapus.', 'warning');
+            if (!target) return;
+            if (target.id === activeStaffId) {
+                showToast('Akun yang sedang Anda gunakan login tidak dapat dihapus.', 'warning');
                 return;
             }
-            staffList = staffList.filter(st => st.id !== staffId);
-            broadcastSync('STAFF_DELETED');
-            renderStaffAccountsGrid();
-            showToast(`Akun "${target.name}" berhasil dihapus permanen.`, 'info');
+            const proctorCount = staffList.filter(st => st.role === 'PROCTOR').length;
+            if (target.role === 'PROCTOR' && proctorCount <= 1) {
+                showToast('Minimal harus tersisa 1 akun PROKTOR di sistem.', 'warning');
+                return;
+            }
         }
 
         function renderStaffAccountsGrid() {
             const grid = document.getElementById('staff-accounts-grid');
             if (!grid) return;
             grid.innerHTML = staffList.map(st => {
-                const isMainProctor = st.id === activeStaffId;
+                const isCurrentSelf = st.id === activeStaffId;
                 return `
                     <div class="p-4 rounded-2xl border border-slate-200 bg-white space-y-2.5 shadow-sm">
                         <div class="flex items-start justify-between gap-2">
@@ -3898,7 +4103,7 @@
                                 <h3 class="text-sm font-extrabold text-slate-900">${escapeHTML(st.name)}</h3>
                                 <span class="inline-block mt-0.5 px-2 py-0.5 rounded-lg text-[10px] font-extrabold ${st.role === 'PROCTOR' ? 'bg-amber-100 text-amber-800' : 'bg-indigo-100 text-indigo-800'}">${st.role}</span>
                             </div>
-                            ${!isMainProctor ? `
+                            ${!isCurrentSelf ? `
                                 <button type="button" onclick="deleteStaffAccount('${st.id}')" class="px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 text-[11px] font-extrabold">Hapus</button>
                             ` : ''}
                         </div>
@@ -3912,7 +4117,7 @@
                                 <i data-lucide="shuffle" class="w-3 h-3"></i>
                                 <span>Acak Token</span>
                             </button>
-                            ${!isMainProctor ? `
+                            ${!isCurrentSelf ? `
                                 <button type="button" onclick="randomizeSingleStaffPassword('${st.id}')" class="px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 text-[11px] font-extrabold flex items-center gap-1">
                                     <i data-lucide="key-round" class="w-3 h-3"></i>
                                     <span>Acak Pass</span>
@@ -3924,7 +4129,6 @@
             }).join('');
             refreshIcons();
         }
-
         // =========================================================
         // CETAK / DOWNLOAD PDF HELPER (UNIVERSAL)
         // =========================================================
@@ -3942,110 +4146,124 @@
         }
 
         // INISIALISASI SAAT HALAMAN DIMUAT
-       window.addEventListener('DOMContentLoaded', async () => {
-    await loadAllData(true);
-    fillRandomStudentPasswordInput();
-    fillRandomStaffPasswordInput();
-    fillRandomStaffTokenInput();
-    refreshIcons();
-});
+        window.addEventListener('DOMContentLoaded', () => {
+            loadAllData(true);
+            fillRandomStudentPasswordInput();
+            fillRandomStaffPasswordInput();
+            fillRandomStaffTokenInput();
+            refreshIcons();
+        });
     </script>
 <script>
+
 // =========================================================
-// KONFIGURASI SUPABASE CLOUD & REALTIME
-// =========================================================
-const SUPABASE_URL = 'https://mrwxpbfqevnnwovwiwhp.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1yd3hwYmZxZXZubndvdndpd2hwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTUzNzY0NzIsImV4cCI6MjExMDk1MjQ3Mn0.9rARH4DvmtO9PlBIpNbNiKDLL2MSxw8oj7C2MuPPhm0';
-const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        // KONEKSI & SINKRONISASI REALTIME SUPABASE (NON-DESTRUKTIF)
+        // =========================================================
+        const SUPABASE_URL = 'https://mrwxpbfqevnnwovwiwhp.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1yd3hwYmZxZXZubndvdndpd2hwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTUzNzY0NzIsImV4cCI6MjExMDk1MjQ3Mn0.9rARH4DvmtO9PlBIpNbNiKDLL2MSxw8oj7C2MuPPhm0';
+        const supabaseClient = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
-// Melacak ID yang tersimpan di cloud agar fitur Hapus ikut menghapus data di Supabase
-const cloudSyncedIds = {
-    staff: new Set(),
-    students: new Set(),
-    exams: new Set(),
-    questions: new Set()
-};
+        let isInitialSupabaseLoaded = false;
+        let supabaseSyncTimer = null;
+        const knownSupabaseIds = {
+            tka_staff: new Set(),
+            tka_students: new Set(),
+            tka_exams: new Set(),
+            tka_questions: new Set()
+        };
 
-let isSyncingToCloud = false;
-
-async function loadAllData(initSave = false) {
-    try {
-        const [resStaff, resStudents, resExams, resQuestions] = await Promise.all([
-            sbClient.from('tka_staff').select('*'),
-            sbClient.from('tka_students').select('*'),
-            sbClient.from('tka_exams').select('*'),
-            sbClient.from('tka_questions').select('*')
-        ]);
-
-        if (resStaff.data) {
-            staffList = resStaff.data;
-            cloudSyncedIds.staff = new Set(staffList.map(i => i.id));
-        }
-        if (resStudents.data) {
-            studentsList = resStudents.data;
-            cloudSyncedIds.students = new Set(studentsList.map(i => i.id));
-        }
-        if (resExams.data) {
-            examsList = resExams.data;
-            cloudSyncedIds.exams = new Set(examsList.map(i => i.id));
-        }
-        if (resQuestions.data) {
-            questionsList = resQuestions.data;
-            cloudSyncedIds.questions = new Set(questionsList.map(i => i.id));
+        function saveAllData() {
+            safeStorage.setItem(STORAGE_KEYS.STAFF, JSON.stringify(staffList));
+            safeStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(studentsList));
+            safeStorage.setItem(STORAGE_KEYS.EXAMS, JSON.stringify(examsList));
+            safeStorage.setItem(STORAGE_KEYS.QUESTIONS, JSON.stringify(questionsList));
         }
 
-        
-        if (initSave) await saveAllData();
-        populateRegisteredStudentsDatalist();
-        refreshCurrentActiveUI();
-    } catch (err) {
-        console.error('Gagal memuat data dari Supabase:', err);
-        showToast('Gagal terhubung ke database Supabase. Periksa koneksi internet.', 'error');
-    }
-}
+        async function fetchAllFromSupabase(refreshUI = false) {
+            if (!supabaseClient) return;
+            try {
+                const [resStaff, resStudents, resExams, resQuestions] = await Promise.all([
+                    supabaseClient.from('tka_staff').select('*'),
+                    supabaseClient.from('tka_students').select('*'),
+                    supabaseClient.from('tka_exams').select('*'),
+                    supabaseClient.from('tka_questions').select('*')
+                ]);
 
-async function syncTableToSupabase(tableName, currentArray, keyName) {
-    const currentIds = new Set(currentArray.map(item => item.id));
-    const deletedIds = [...cloudSyncedIds[keyName]].filter(id => !currentIds.has(id));
+                if (resStaff.error || resStudents.error || resExams.error || resQuestions.error) {
+                    console.error('Gagal memuat dari Supabase:', resStaff.error || resStudents.error || resExams.error || resQuestions.error);
+                    return;
+                }
 
-    if (deletedIds.length > 0) {
-        await sbClient.from(tableName).delete().in('id', deletedIds);
-    }
-    if (currentArray.length > 0) {
-        const { error } = await sbClient.from(tableName).upsert(currentArray, { onConflict: 'id' });
-        if (error) console.error(`Error upsert ${tableName}:`, error);
-    }
-    cloudSyncedIds[keyName] = currentIds;
-}
+                staffList = Array.isArray(resStaff.data) ? resStaff.data : [];
+                studentsList = Array.isArray(resStudents.data) ? resStudents.data.map(normalizeStudentRecord) : [];
+                examsList = Array.isArray(resExams.data) ? resExams.data : [];
+                questionsList = Array.isArray(resQuestions.data) ? resQuestions.data : [];
 
-async function saveAllData() {
-    if (isSyncingToCloud) return;
-    isSyncingToCloud = true;
-    try {
-        await Promise.all([
-            syncTableToSupabase('tka_staff', staffList, 'staff'),
-            syncTableToSupabase('tka_students', studentsList, 'students'),
-            syncTableToSupabase('tka_exams', examsList, 'exams'),
-            syncTableToSupabase('tka_questions', questionsList, 'questions')
-        ]);
-    } finally {
-        isSyncingToCloud = false;
-    }
-}
+                knownSupabaseIds.tka_staff = new Set(staffList.map(x => x.id));
+                knownSupabaseIds.tka_students = new Set(studentsList.map(x => x.id));
+                knownSupabaseIds.tka_exams = new Set(examsList.map(x => x.id));
+                knownSupabaseIds.tka_questions = new Set(questionsList.map(x => x.id));
 
-function broadcastSync(eventType = 'UPDATE', payload = {}) {
-    saveAllData();
-}
+                isInitialSupabaseLoaded = true;
+                saveAllData();
+                populateRegisteredStudentsDatalist();
 
-// Listener Realtime Supabase (Menggantikan BroadcastChannel antarperangkat)
-sbClient
-    .channel('eduguard-tka-realtime')
-    .on('postgres_changes', { event: '*', schema: 'public' }, () => {
-        if (!isSyncingToCloud) {
-            loadAllData(false);
+                if (refreshUI) {
+                    refreshCurrentActiveUI('SUPABASE_REALTIME', {});
+                }
+            } catch (err) {
+                console.error('Error sinkronisasi awal Supabase:', err);
+            }
         }
-    })
-    .subscribe();
+
+        async function syncTableToSupabase(tableName, currentRows) {
+            if (!supabaseClient || !isInitialSupabaseLoaded) return;
+            const currentIds = new Set(currentRows.map(r => r.id));
+            const deletedIds = [...knownSupabaseIds[tableName]].filter(id => !currentIds.has(id));
+
+            if (deletedIds.length > 0) {
+                await supabaseClient.from(tableName).delete().in('id', deletedIds);
+            }
+            if (currentRows.length > 0) {
+                const { error } = await supabaseClient.from(tableName).upsert(currentRows, { onConflict: 'id' });
+                if (error) console.error(`Gagal upsert ke ${tableName}:`, error);
+            }
+            knownSupabaseIds[tableName] = currentIds;
+        }
+
+        function scheduleSupabaseSync() {
+            if (!supabaseClient || !isInitialSupabaseLoaded) return;
+            clearTimeout(supabaseSyncTimer);
+            supabaseSyncTimer = setTimeout(async () => {
+                await Promise.all([
+                    syncTableToSupabase('tka_staff', staffList),
+                    syncTableToSupabase('tka_students', studentsList),
+                    syncTableToSupabase('tka_exams', examsList),
+                    syncTableToSupabase('tka_questions', questionsList)
+                ]);
+            }, 250);
+        }
+
+        function initSupabaseRealtimeSubscription() {
+            if (!supabaseClient) return;
+            supabaseClient
+                .channel('eduguard-tka-live')
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'tka_staff' }, () => fetchAllFromSupabase(true))
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'tka_students' }, () => fetchAllFromSupabase(true))
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'tka_exams' }, () => fetchAllFromSupabase(true))
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'tka_questions' }, () => fetchAllFromSupabase(true))
+                .subscribe();
+        }
+
+        function broadcastSync(eventType = 'UPDATE', payload = {}) {
+            saveAllData();
+            scheduleSupabaseSync();
+            try {
+                if (syncChannel) {
+                    syncChannel.postMessage({ eventType, payload, ts: Date.now() });
+                }
+            } catch (e) {}
+        }
 
 </script>
 </body>
